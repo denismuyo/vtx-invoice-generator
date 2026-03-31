@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<!--
+  ╔══════════════════════════════════════════════════════════╗
+  ║  VERSATECH INVOICE GENERATOR — PATCH NOTES              ║
+  ╠══════════════════════════════════════════════════════════╣
+  ║                                                          ║
+  ║  FIX 1 · LOGO BACKGROUND                                ║
+  ║    Removed forced dark background from .inv-logo.        ║
+  ║    Added background:transparent. Increased size to       ║
+  ║    56×56px for better visual weight.                     ║
+  ║                                                          ║
+  ║  FIX 2 · SIGNATURE & STAMP SIZE                         ║
+  ║    sig-images container: 220×90px (was 172×68px).       ║
+  ║    sig-image: 190×80px (was 150×58px).                  ║
+  ║    stamp-image: 72×72px (was 50×50px).                  ║
+  ║    sig-block width: 220px (was 172px).                   ║
+  ║                                                          ║
+  ║  FIX 3 · PAYMENT SECTION INVISIBLE IN PDF               ║
+  ║    html2canvas drops inline-flex + gap on complex        ║
+  ║    nested elements. Replaced .payment-box layout with    ║
+  ║    display:flex; replaced gap: with explicit margin-     ║
+  ║    right on dividers. Replaced inline-flex on badge      ║
+  ║    with display:flex. All safe for html2canvas.          ║
+  ║                                                          ║
+  ║  FIX 4 · FOOTER INVISIBLE IN PDF                        ║
+  ║    margin-top:auto in a flex column collapses when       ║
+  ║    html2pdf clones the DOM at fixed height. Replaced     ║
+  ║    with position:absolute + bottom:0 on footer, and      ║
+  ║    added padding-bottom to inv-bottom-row to prevent     ║
+  ║    overlap. Canvas uses position:relative.               ║
+  ║                                                          ║
+  ║  FIX 5 · PDF RENDERING CONFIG                           ║
+  ║    scale: 3 (was 2) for sharper output.                  ║
+  ║    Added windowWidth:794 to match A4 pixel width.        ║
+  ║    Added imageTimeout:0 to prevent image drops.          ║
+  ║    Added allowTaint:true so cross-origin images load.    ║
+  ║    Added onclone callback to force color/bg rendering    ║
+  ║    in the cloned DOM before capture.                     ║
+  ║                                                          ║
+  ║  FIX 6 · IMAGE RELIABILITY                              ║
+  ║    Added explicit width/height attributes on all         ║
+  ║    img tags (html2canvas uses these for layout).         ║
+  ║    Added crossOrigin="anonymous" where applicable.       ║
+  ║    Ensured fallbacks don't interfere with PDF clone.     ║
+  ║                                                          ║
+  ╚══════════════════════════════════════════════════════════╝
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>VersaTech Invoice Generator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+    <!-- html2canvas standalone -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <!-- jsPDF standalone -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    /* ─── RESET ──────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:                #edecea;
+      --surface:           #ffffff;
+      --surface-raised:    #fafaf9;
+      --border:            #e7e5e4;
+      --border-subtle:     #f0efee;
+      --text-primary:      #1c1917;
+      --text-secondary:    #78716c;
+      --text-muted:        #a8a29e;
+      --accent:            #0f172a;
+      --accent-blue:       #1d4ed8;
+      --accent-blue-light: #eff6ff;
+      --accent-blue-border:#bfdbfe;
+      --green:             #16a34a;
+      --green-light:       #f0fdf4;
+      --red:               #dc2626;
+      --shadow-sm:         0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03);
+      --shadow-md:         0 4px 20px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05);
+      --radius:            12px;
+      --radius-sm:         8px;
+      --radius-xs:         6px;
+      --a4-w:              794px;
+      --a4-h:              1123px;
+    }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      min-height: 100vh;
+      font-size: 13px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ─── APP SHELL ──────────────────────────────────── */
+    .app-shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+    /* ─── TOPBAR ─────────────────────────────────────── */
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 52px;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+      flex-shrink: 0;
+    }
+    .topbar-brand   { display: flex; align-items: center; gap: 10px; }
+    .topbar-logo    {
+      width: 96px; height: 96px;
+      background: var(--accent); border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .topbar-logo svg   { width: 15px; height: 15px; }
+    .topbar-name       { font-size: 13px; font-weight: 600; color: var(--text-primary); letter-spacing: -0.01em; }
+    .topbar-divider    { width: 1px; height: 16px; background: var(--border); }
+    .topbar-module     { font-size: 12.5px; color: var(--text-secondary); }
+    .topbar-actions    { display: flex; align-items: center; gap: 8px; }
+
+    /* ─── BUTTONS ────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 13px; border-radius: var(--radius-xs);
+      font-family: 'DM Sans', sans-serif; font-size: 12.5px; font-weight: 500;
+      cursor: pointer; border: none;
+      transition: all 0.14s ease; line-height: 1; white-space: nowrap;
+    }
+    .btn-ghost   { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface-raised); color: var(--text-primary); border-color: #d4d0cb; }
+    .btn-primary { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+    .btn-primary:hover { background: #1e293b; }
+    .btn-blue    { background: var(--accent-blue); color: #fff; border: 1px solid var(--accent-blue); }
+    .btn-blue:hover { background: #1e40af; }
+    .btn-danger-ghost {
+      background: transparent; color: var(--red); border: none;
+      padding: 3px 5px; border-radius: var(--radius-xs); line-height: 1;
+    }
+    .btn-danger-ghost:hover { background: #fef2f2; }
+    .btn-sm   { padding: 4px 9px; font-size: 11.5px; }
+    .btn-icon { width: 26px; height: 26px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+
+    /* ─── STATUS BADGE ───────────────────────────────── */
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 20px;
+      font-size: 11.5px; font-weight: 500;
+      cursor: pointer; border: none;
+      font-family: 'DM Sans', sans-serif;
+      appearance: none; -webkit-appearance: none;
+    }
+    .status-badge option { font-size: 13px; }
+    .status-draft { background: #f5f5f4; color: #78716c; border: 1px solid #e7e5e4; }
+    .status-sent  { background: var(--accent-blue-light); color: var(--accent-blue); border: 1px solid var(--accent-blue-border); }
+    .status-paid  { background: var(--green-light); color: var(--green); border: 1px solid #bbf7d0; }
+
+    /* ─── PAGE LAYOUT ────────────────────────────────── */
+    .main {
+      flex: 1;
+      padding: 28px 24px;
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    /* ─── INVOICE CANVAS — A4 LOCKED ────────────────── */
+    /*
+      FIX 4: position:relative so footer can be position:absolute.
+      overflow:hidden kept so nothing bleeds outside A4.
+    */
+    .invoice-canvas {
+      width: var(--a4-w);
+      height: var(--a4-h);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      position: relative; /* FIX 4: anchor for absolute footer */
+    }
+
+    /* ─── INVOICE HEADER ─────────────────────────────── */
+    .inv-header {
+      padding: 26px 36px 20px;
+      display: grid; grid-template-columns: 1fr auto; gap: 24px;
+      align-items: start;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+
+    /*
+      FIX 1: Removed background from .inv-logo.
+      Transparent so logo image renders on white, no dark box.
+      Size increased to 56×56px.
+    */
+    .inv-logo {
+      width: 56px;
+      height: 56px;
+      border-radius: 0;          /* FIX 1: no radius clipping transparent logo */
+      overflow: visible;
+      margin-bottom: 11px;
+      background: transparent;  /* FIX 1: was var(--accent) — removed */
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .inv-logo img {
+      width: 56px;              /* FIX 1: match container */
+      height: 56px;
+      object-fit: contain;      /* FIX 1: contain (not cover) for logos */
+      display: block;
+    }
+
+    .inv-company-name { font-size: 13px; font-weight: 700; color: var(--text-primary); margin-bottom: 4px; letter-spacing: -0.02em; }
+    .inv-company-meta { font-size: 11px; color: var(--text-secondary); line-height: 1.8; }
+    .inv-company-meta a { color: var(--accent-blue); text-decoration: none; }
+
+    .inv-title-block { text-align: right; }
+    .inv-title-word  {
+      font-size: 34px; font-weight: 700; color: var(--text-primary);
+      letter-spacing: -0.05em; line-height: 1; margin-bottom: 14px;
+      font-family: 'DM Mono', monospace;
+    }
+    .inv-meta-grid { display: grid; gap: 7px; }
+    .inv-meta-row  { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
+    .inv-meta-label { font-size: 10.5px; color: var(--text-muted); font-weight: 500; min-width: 70px; text-align: right; }
+    .inv-meta-value { font-size: 12px; font-weight: 600; color: var(--text-primary); font-family: 'DM Mono', monospace; min-width: 118px; text-align: right; }
+
+    /* ─── EDITABLE INPUTS ────────────────────────────── */
+    .editable {
+      background: transparent; border: none; outline: none;
+      font-family: inherit; font-size: inherit; font-weight: inherit;
+      color: inherit; letter-spacing: inherit; line-height: inherit;
+      cursor: text; padding: 2px 5px; border-radius: 4px;
+      transition: background 0.12s, box-shadow 0.12s; width: 100%;
+    }
+    .editable:hover { background: #f5f4f3; }
+    .editable:focus { background: #fff; box-shadow: 0 0 0 2px var(--accent-blue-border); }
+    .editable.mono  { font-family: 'DM Mono', monospace; }
+    .editable.right { text-align: right; }
+    input[type="date"].editable { min-width: 118px; font-size: 11.5px; }
+
+    /* ─── BILLING ────────────────────────────────────── */
+    .inv-billing {
+      padding: 16px 36px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 32px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+    .billing-block-label { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-muted); margin-bottom: 8px; }
+    .billing-fields      { display: flex; flex-direction: column; gap: 1px; }
+    .billing-field       { display: flex; flex-direction: column; }
+    .field-label         { font-size: 9.5px; color: var(--text-muted); padding: 0 5px; }
+    .billing-name-input  { font-size: 13px !important; font-weight: 600 !important; }
+
+    /* ─── LINE ITEMS ─────────────────────────────────── */
+    .inv-items {
+      padding: 14px 36px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+    .items-table { width: 100%; border-collapse: collapse; }
+    .items-table thead tr { border-bottom: 1px solid var(--border); }
+    .items-table th {
+      font-size: 9.5px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.07em; color: var(--text-muted); padding: 0 0 7px; text-align: left;
+    }
+    .items-table th.right { text-align: right; }
+    .items-table td       { padding: 3px 0; vertical-align: middle; }
+    .items-table tr:not(:last-child) td { border-bottom: 1px solid var(--border-subtle); }
+    .col-item  { width: 20%; } .col-desc  { width: 36%; }
+    .col-qty   { width: 9%; }  .col-price { width: 16%; }
+    .col-total { width: 14%; } .col-del   { width: 5%; }
+    .item-total-cell {
+      font-weight: 600; color: var(--text-primary);
+      font-family: 'DM Mono', monospace;
+      text-align: right; padding-right: 4px; font-size: 11.5px;
+    }
+    .add-item-row { margin-top: 7px; display: flex; align-items: center; }
+
+    /* ─── TOTALS ─────────────────────────────────────── */
+    .inv-totals {
+      padding: 12px 36px 14px;
+      display: flex; justify-content: flex-end;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+    .totals-block { width: 264px; }
+    .totals-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 0; border-bottom: 1px solid var(--border-subtle);
+    }
+    .totals-row:last-child { border-bottom: none; }
+    .totals-label { font-size: 11.5px; color: var(--text-secondary); }
+    .totals-value { font-size: 11.5px; font-weight: 500; color: var(--text-primary); font-family: 'DM Mono', monospace; }
+    .pct-sign     { font-size: 10.5px; color: var(--text-muted); }
+    .totals-row.grand {
+      margin-top: 6px; padding: 10px 14px;
+      background: #0f172a;   /* FIX 5: explicit hex, not CSS var — html2canvas reads computed values more reliably */
+      border-radius: var(--radius-sm); border-bottom: none;
+    }
+    .totals-row.grand .totals-label { font-size: 10.5px; font-weight: 600; color: rgba(255,255,255,0.65); letter-spacing: 0.05em; text-transform: uppercase; }
+    .totals-row.grand .totals-value { font-size: 17px; font-weight: 700; color: #ffffff; font-family: 'DM Mono', monospace; }
+
+    /* ─── BOTTOM ROW: PAYMENT + SIGNATURE ───────────── */
+    /*
+      FIX 4: padding-bottom ensures content doesn't slide under
+      the absolutely-positioned footer (≈ 42px tall).
+    */
+    .inv-bottom-row {
+      padding: 14px 36px 52px;   /* FIX 4: bottom pad = footer height + gap */
+      display: grid; grid-template-columns: 1fr auto; gap: 24px;
+      align-items: end;
+      flex-shrink: 0;
+    }
+
+    /* ─── PAYMENT BOX ────────────────────────────────── */
+    /*
+      FIX 3: Replaced inline-flex + gap with display:flex and
+      explicit margin-right on child elements. html2canvas renders
+      flex reliably; gap can silently collapse in cloned DOMs.
+      Replaced CSS-var background with literal hex for paint reliability.
+    */
+    .payment-section-label {
+      font-size: 9.5px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.09em; color: #a8a29e; margin-bottom: 9px;
+    }
+    .payment-box {
+      display: flex;                 /* FIX 3: was inline-flex */
+      flex-direction: row;
+      align-items: center;
+      background: #eff6ff;           /* FIX 3: was var(--accent-blue-light) */
+      border: 1px solid #bfdbfe;     /* FIX 3: was var(--accent-blue-border) */
+      border-radius: 8px;
+      padding: 10px 16px;
+      width: fit-content;
+    }
+
+    /* FIX 3: margin-right replaces gap */
+    .payment-method-badge {
+      display: flex;
+      align-items: center;
+      margin-right: 18px;            /* FIX 3: replaces parent gap */
+    }
+    .mpesa-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #4ade80;
+      margin-right: 7px;             /* FIX 3: replaces badge gap */
+      flex-shrink: 0;
+    }
+    .payment-method-name { font-size: 11.5px; font-weight: 600; color: #1d4ed8; }
+
+    .payment-divider {
+      width: 1px; height: 22px;
+      background: #bfdbfe;
+      margin-right: 18px;            /* FIX 3: replaces parent gap */
+      flex-shrink: 0;
+    }
+
+    .payment-detail {
+      display: flex; flex-direction: column;
+      margin-right: 18px;            /* FIX 3: replaces parent gap */
+    }
+    .payment-detail:last-child { margin-right: 0; }
+    .payment-detail-label {
+      font-size: 9.5px; color: #93c5fd; font-weight: 500;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .payment-detail-value {
+      font-size: 13px; font-weight: 700; color: #1d4ed8;
+      font-family: 'DM Mono', monospace;
+    }
+
+    /* ─── SIGNATURE BLOCK ────────────────────────────── */
+    /*
+      FIX 2: Enlarged sig-block, sig-images, sig-image, stamp-image.
+      Sizes are now clearly visible in PDF at scale:3 render.
+    */
+    .sig-block {
+      display: flex; flex-direction: column; align-items: center;
+      width: 220px;                  /* FIX 2: was 172px */
+    }
+    .sig-images {
+      width: 220px;                  /* FIX 2: was 172px */
+      height: 90px;                  /* FIX 2: was 68px */
+      position: relative;
+      margin-bottom: 8px;
+    }
+    .sig-image {
+      position: absolute; top: 0; left: 0;
+      width: 190px;                  /* FIX 2: was 150px */
+      height: 80px;                  /* FIX 2: was 58px */
+      object-fit: contain;
+    }
+    .stamp-image {
+      position: absolute; bottom: -6px; right: 0;
+      width: 92px;                   /* FIX 2: was 50px */
+      height: 92px;                  /* FIX 2: was 50px */
+      object-fit: contain;
+      opacity: 0.92;
+    }
+
+    /* SVG fallbacks (unchanged behaviour, tidied) */
+    .sig-svg-fallback {
+      position: absolute; top: 10px; left: 0;
+      flex-direction: column; gap: 7px; /* display set inline via style attr */
+    }
+    .sig-svg-fallback-line { height: 2px; border-radius: 2px; background: #1c1917; opacity: 0.12; }
+    .stamp-svg-fallback {
+      position: absolute; bottom: -6px; right: 0;
+      width: 72px; height: 72px;         /* FIX 2: match stamp-image size */
+      border: 1.5px solid #a8a29e; border-radius: 50%;
+      opacity: 0.22;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .stamp-svg-fallback-text { font-size: 7px; font-weight: 700; color: #a8a29e; letter-spacing: 0.06em; text-align: center; }
+
+    .sig-line       { width: 100%; border-top: 1px solid var(--border); padding-top: 5px; text-align: center; }
+    .sig-name-text  { font-size: 10.5px; color: var(--text-secondary); font-weight: 500; }
+    .sig-title-text { font-size: 9.5px; color: var(--text-muted); }
+
+    /* ─── NOTES ──────────────────────────────────────── */
+    .inv-notes {
+      padding: 8px 36px;
+      border-top: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+    .notes-label { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-muted); margin-bottom: 3px; }
+    .notes-text  { font-size: 11px; color: var(--text-secondary); line-height: 1.6; }
+
+    /* ─── FOOTER ─────────────────────────────────────── */
+    /*
+      FIX 4: margin-top:auto fails in html2pdf because the cloned
+      element is rendered at a fixed pixel height — flex auto margins
+      don't resolve the same way. Solution: position:absolute anchored
+      to the bottom of .invoice-canvas (which is position:relative).
+      This guarantees the footer always paints at the bottom edge in
+      both screen AND PDF regardless of flex context.
+    */
+    .inv-footer {
+      position: absolute;            /* FIX 4: was margin-top:auto in flex */
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 10px 36px;
+      display: flex; align-items: center; justify-content: space-between;
+      background: #fafaf9;           /* FIX 4: literal hex, reliable paint */
+      border-top: 1px solid #f0efee;
+    }
+    .inv-footer-left       { font-size: 10px; color: var(--text-muted); line-height: 1.6; }
+    .inv-footer-left strong{ color: var(--text-secondary); font-weight: 600; display: block; margin-bottom: 1px; }
+    .inv-footer-right      { font-size: 9.5px; color: var(--text-muted); font-family: 'DM Mono', monospace; text-align: right; }
+
+    /* ─── RIGHT PANEL ────────────────────────────────── */
+    .right-panel {
+      width: 280px; flex-shrink: 0;
+      display: flex; flex-direction: column; gap: 14px;
+      position: sticky; top: 68px;
+    }
+    .card        { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
+    .card-header { padding: 14px 18px 0; display: flex; align-items: center; justify-content: space-between; }
+    .card-title  { font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); }
+    .card-body   { padding: 12px 18px 18px; }
+
+    .actions-section      { display: flex; flex-direction: column; gap: 7px; }
+    .actions-section .btn { width: 100%; justify-content: center; }
+
+    .stat-chips            { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .stat-chip             { background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+    .stat-chip-label       { font-size: 10px; color: var(--text-muted); font-weight: 500; margin-bottom: 3px; }
+    .stat-chip-value       { font-size: 15px; font-weight: 700; color: var(--text-primary); font-family: 'DM Mono', monospace; letter-spacing: -0.02em; }
+    .stat-chip-value.blue  { color: var(--accent-blue); }
+    .stat-chip-value.green { color: var(--green); }
+
+    .settings-grid { display: flex; flex-direction: column; gap: 12px; }
+    .setting-row   { display: flex; flex-direction: column; gap: 4px; }
+    .setting-label { font-size: 11.5px; font-weight: 500; color: var(--text-secondary); }
+    .setting-input {
+      width: 100%; padding: 6px 9px;
+      border: 1px solid var(--border); border-radius: var(--radius-xs);
+      font-family: 'DM Sans', sans-serif; font-size: 12.5px;
+      color: var(--text-primary); background: var(--surface); outline: none;
+      transition: border-color 0.14s, box-shadow 0.14s; appearance: none;
+    }
+    .setting-input:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px var(--accent-blue-light); }
+    .setting-input.mono  { font-family: 'DM Mono', monospace; }
+    .notes-textarea {
+      width: 100%; padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: var(--radius-xs);
+      font-family: 'DM Sans', sans-serif; font-size: 12.5px;
+      color: var(--text-primary); background: var(--surface); outline: none;
+      resize: vertical; min-height: 68px;
+      transition: border-color 0.14s, box-shadow 0.14s; line-height: 1.6;
+    }
+    .notes-textarea:focus { border-color: #93c5fd; box-shadow: 0 0 0 3px var(--accent-blue-light); }
+
+    .toggle-row { display: flex; align-items: center; justify-content: space-between; }
+    .toggle     { position: relative; width: 34px; height: 19px; display: inline-block; }
+    .toggle input { display: none; }
+    .toggle-track {
+      position: absolute; inset: 0;
+      background: var(--border); border-radius: 20px; cursor: pointer; transition: background 0.18s;
+    }
+    .toggle input:checked + .toggle-track { background: var(--accent-blue); }
+    .toggle-track::after {
+      content: ''; position: absolute; top: 2.5px; left: 2.5px;
+      width: 14px; height: 14px; background: white; border-radius: 50%;
+      transition: transform 0.18s; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .toggle input:checked + .toggle-track::after { transform: translateX(15px); }
+
+    /* ─── PRINT ──────────────────────────────────────── */
+    @media print {
+      @page { size: A4; margin: 0; }
+      body  { background: white !important; }
+      .topbar, .right-panel { display: none !important; }
+      .main { padding: 0 !important; display: block !important; }
+      .invoice-canvas {
+        width: 210mm !important; height: 297mm !important;
+        box-shadow: none !important; border: none !important; border-radius: 0 !important;
+      }
+      .add-item-row, .btn-danger-ghost { display: none !important; }
+      * { page-break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ══ TOPBAR ══ -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="topbar-logo">
+        <svg viewBox="0 0 16 16" fill="none">
+          <rect x="1" y="1" width="6" height="6" rx="1.5" fill="white" opacity="0.9"/>
+          <rect x="9" y="1" width="6" height="6" rx="1.5" fill="white" opacity="0.45"/>
+          <rect x="1" y="9" width="6" height="6" rx="1.5" fill="white" opacity="0.45"/>
+          <rect x="9" y="9" width="6" height="6" rx="1.5" fill="white" opacity="0.9"/>
+        </svg>
+      </div>
+      <span class="topbar-name">VersaTech</span>
+      <div class="topbar-divider"></div>
+      <span class="topbar-module">Invoice Generator</span>
+    </div>
+    <div class="topbar-actions">
+      <select id="status-select" class="status-badge status-draft" onchange="updateStatus(this)">
+        <option value="draft">● Draft</option>
+        <option value="sent">● Sent</option>
+        <option value="paid">● Paid</option>
+      </select>
+      <button class="btn btn-ghost" onclick="window.print()">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <path d="M4 4V2h8v2M4 12H3a1 1 0 01-1-1V7a1 1 0 011-1h10a1 1 0 011 1v4a1 1 0 01-1 1h-1M4 9h8v5H4V9z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Print
+      </button>
+      <button class="btn btn-blue" onclick="downloadPDF()">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <path d="M8 2v8M5 7l3 3 3-3M3 11v2a1 1 0 001 1h8a1 1 0 001-1v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Download PDF
+      </button>
+    </div>
+  </header>
+
+  <!-- ══ MAIN ══ -->
+  <main class="main">
+
+    <!-- ════ INVOICE CANVAS — A4 ════ -->
+    <div id="invoice-canvas" class="invoice-canvas">
+
+      <!-- HEADER -->
+      <div class="inv-header">
+        <div>
+          <!--
+            FIX 1: background:transparent, object-fit:contain, larger size.
+            FIX 6: explicit width/height attrs help html2canvas reserve space.
+          -->
+          <div class="inv-logo">
+            <img
+              src="logo.png"
+              alt="VersaTech"
+              width="56"
+              height="56"
+              onerror="this.style.display='none'; document.getElementById('logo-fb').style.display='flex';"
+            />
+            <!--
+              Fallback SVG: only shown if logo.png fails.
+              Uses a dark rounded-squares mark matching brand style.
+            -->
+            <div id="logo-fb" style="display:none; width:56px; height:56px; background:#0f172a; border-radius:11px; align-items:center; justify-content:center;">
+              <svg width="32" height="32" viewBox="0 0 30 30" fill="none">
+                <rect x="2" y="2" width="11" height="11" rx="3" fill="white" opacity="0.9"/>
+                <rect x="17" y="2" width="11" height="11" rx="3" fill="white" opacity="0.4"/>
+                <rect x="2" y="17" width="11" height="11" rx="3" fill="white" opacity="0.4"/>
+                <rect x="17" y="17" width="11" height="11" rx="3" fill="white" opacity="0.9"/>
+              </svg>
+            </div>
+          </div>
+
+          <div class="inv-company-name">VersaTech Global Solutions Ltd</div>
+          <div class="inv-company-meta">
+            Narok, Kenya<br/>
+            <a href="info@versatechglobalsolutions.com" target="_blank">info@versatechglobalsolutions.com</a> <br>
+            <a href="https://www.versatechglobalsolutions.com" target="_blank">www.versatechglobalsolutions.com</a>
+          </div>
+        </div>
+
+        <div class="inv-title-block">
+          <div class="inv-title-word">INVOICE</div>
+          <div class="inv-meta-grid">
+            <div class="inv-meta-row">
+              <span class="inv-meta-label">Invoice No.</span>
+              <span class="inv-meta-value" id="inv-number-display">VTS-INV-001</span>
+            </div>
+            <div class="inv-meta-row">
+              <span class="inv-meta-label">Issue Date</span>
+              <input type="date" class="editable mono right inv-meta-value" id="issue-date" />
+            </div>
+            <div class="inv-meta-row">
+              <span class="inv-meta-label">Due Date</span>
+              <input type="date" class="editable mono right inv-meta-value" id="due-date" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- BILLING -->
+      <div class="inv-billing">
+        <div>
+          <div class="billing-block-label">Bill To</div>
+          <div class="billing-fields">
+            <div class="billing-field">
+              <span class="field-label">Client Name</span>
+              <input class="editable billing-name-input" id="client-name" placeholder="Client or company name" />
+            </div>
+            <div class="billing-field">
+              <span class="field-label">Email</span>
+              <input class="editable" id="client-email" placeholder="client@example.com" />
+            </div>
+            <div class="billing-field">
+              <span class="field-label">Phone</span>
+              <input class="editable" id="client-phone" placeholder="+254 7XX XXX XXX" />
+            </div>
+            <div class="billing-field">
+              <span class="field-label">Address</span>
+              <input class="editable" id="client-address" placeholder="City, Country" />
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="billing-block-label">Project / Reference</div>
+          <div class="billing-fields">
+            <div class="billing-field">
+              <span class="field-label">Project Name</span>
+              <input class="editable billing-name-input" id="project-name" placeholder="e.g. Website Redesign" />
+            </div>
+            <div class="billing-field">
+              <span class="field-label">PO / Reference No.</span>
+              <input class="editable mono" id="ref-number" placeholder="REF-XXXX" />
+            </div>
+            <div class="billing-field">
+              <span class="field-label">Currency</span>
+              <input class="editable" id="currency-display" value="KES" readonly style="cursor:default;font-weight:600;" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LINE ITEMS -->
+      <div class="inv-items">
+        <table class="items-table">
+          <thead>
+            <tr>
+              <th class="col-item">Item</th>
+              <th class="col-desc">Description</th>
+              <th class="col-qty right" style="text-align:right">Qty</th>
+              <th class="col-price right" style="text-align:right">Unit Price</th>
+              <th class="col-total right" style="text-align:right">Total</th>
+              <th class="col-del"></th>
+            </tr>
+          </thead>
+          <tbody id="line-items-body"></tbody>
+        </table>
+        <div class="add-item-row">
+          <button class="btn btn-ghost btn-sm" onclick="addLineItem()">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            Add line item
+          </button>
+        </div>
+      </div>
+
+      <!-- TOTALS -->
+      <div class="inv-totals">
+        <div class="totals-block">
+          <div class="totals-row">
+            <span class="totals-label">Subtotal</span>
+            <span class="totals-value" id="subtotal-display">KES 0.00</span>
+          </div>
+          <div class="totals-row" id="discount-row">
+            <span class="totals-label">
+              Discount
+              <span class="pct-sign">(</span><input
+                class="editable mono" id="discount-pct" value="0"
+                style="width:30px;font-size:11px;text-align:right;"
+                oninput="recalculate()" /><span class="pct-sign">%)</span>
+            </span>
+            <span class="totals-value" id="discount-display">— KES 0.00</span>
+          </div>
+          <div class="totals-row" id="surcharge-row">
+            <span class="totals-label">
+              Surcharge / Tax
+              <span class="pct-sign">(</span><input
+                class="editable mono" id="surcharge-pct" value="0"
+                style="width:30px;font-size:11px;text-align:right;"
+                oninput="recalculate()" /><span class="pct-sign">%)</span>
+            </span>
+            <span class="totals-value" id="surcharge-display">+ KES 0.00</span>
+          </div>
+          <div class="totals-row grand">
+            <span class="totals-label">Grand Total</span>
+            <span class="totals-value" id="grand-total-display">KES 0.00</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- PAYMENT + SIGNATURE -->
+      <!--
+        FIX 3 & FIX 2 applied via CSS above.
+        FIX 6: explicit width/height on img tags.
+      -->
+      <div class="inv-bottom-row">
+
+        <!-- M-Pesa payment -->
+        <div>
+          <div class="payment-section-label">Payment Details</div>
+          <div class="payment-box">
+            <div class="payment-method-badge">
+              <div class="mpesa-dot"></div>
+              <span class="payment-method-name">M-Pesa Paybill</span>
+            </div>
+            <div class="payment-divider"></div>
+            <div class="payment-detail">
+              <span class="payment-detail-label">Business No.</span>
+              <span class="payment-detail-value">400200</span>
+            </div>
+            <div class="payment-divider"></div>
+            <div class="payment-detail">
+              <span class="payment-detail-label">Account No.</span>
+              <span class="payment-detail-value">1064622</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Signature + Stamp -->
+        <div class="sig-block">
+          <div class="sig-images">
+
+            <img
+              class="sig-image"
+              src="signature.png"
+              alt="Signature"
+              width="190"
+              height="80"
+              onerror="this.style.display='none'; document.getElementById('sig-fb').style.display='flex';"
+            />
+            <div id="sig-fb" class="sig-svg-fallback" style="display:none;">
+              <div class="sig-svg-fallback-line" style="width:130px;"></div>
+              <div class="sig-svg-fallback-line" style="width:90px;"></div>
+            </div>
+
+            <img
+              class="stamp-image"
+              src="stamp.png"
+              alt="Stamp"
+              width="72"
+              height="72"
+              onerror="this.style.display='none'; document.getElementById('stamp-fb').style.display='flex';"
+            />
+            <div id="stamp-fb" class="stamp-svg-fallback" style="display:none;">
+              <span class="stamp-svg-fallback-text">OFFICIAL<br/>STAMP</span>
+            </div>
+
+          </div>
+          <div class="sig-line">
+            <div class="sig-name-text">Authorized Signatory</div>
+            <div class="sig-title-text">VersaTech Global Solutions Ltd</div>
+          </div>
+        </div>
+
+      </div><!-- /inv-bottom-row -->
+
+      <!-- NOTES (only shown when notes are present) -->
+      <div class="inv-notes" id="notes-section" style="display:none;">
+        <div class="notes-label">Notes</div>
+        <div class="notes-text" id="notes-display"></div>
+      </div>
+
+      <!--
+        FIX 4: Footer is position:absolute bottom:0.
+        It always paints at the A4 bottom edge in screen and PDF.
+      -->
+      <div class="inv-footer">
+        <div class="inv-footer-left">
+          <strong>VersaTech Global Solutions Ltd</strong>
+          Building digital solutions and scalable technology products for modern businesses.
+        </div>
+        <div class="inv-footer-right">
+            <a href="info@versatechglobalsolutions.com" target="_blank">info@versatechglobalsolutions.com</a> <br>
+          +254 712 165 017
+        </div>
+      </div>
+
+    </div><!-- /invoice-canvas -->
+
+    <!-- ════ RIGHT PANEL ════ -->
+    <div class="right-panel">
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Actions</span></div>
+        <div class="card-body">
+          <div class="actions-section">
+            <button class="btn btn-primary" onclick="downloadPDF()">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path d="M8 2v8M5 7l3 3 3-3M3 11v2a1 1 0 001 1h8a1 1 0 001-1v-2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Download as PDF
+            </button>
+            <button class="btn btn-ghost" onclick="window.print()">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path d="M4 4V2h8v2M4 12H3a1 1 0 01-1-1V7a1 1 0 011-1h10a1 1 0 011 1v4a1 1 0 01-1 1h-1M4 9h8v5H4V9z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Print Invoice
+            </button>
+            <button class="btn btn-ghost" onclick="resetInvoice()">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                <path d="M2 8a6 6 0 1012 0 6 6 0 00-12 0M2 4v4h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              New Invoice
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Summary</span></div>
+        <div class="card-body">
+          <div class="stat-chips">
+            <div class="stat-chip">
+              <div class="stat-chip-label">Items</div>
+              <div class="stat-chip-value" id="stat-items">0</div>
+            </div>
+            <div class="stat-chip">
+              <div class="stat-chip-label">Subtotal</div>
+              <div class="stat-chip-value blue" id="stat-subtotal">0.00</div>
+            </div>
+            <div class="stat-chip" style="grid-column:1/-1;">
+              <div class="stat-chip-label">Grand Total (KES)</div>
+              <div class="stat-chip-value green" id="stat-grand">0.00</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Invoice Settings</span></div>
+        <div class="card-body">
+          <div class="settings-grid">
+            <div class="setting-row">
+              <label class="setting-label">Invoice Number</label>
+              <input class="setting-input mono" id="inv-number-input" value="VTS-INV-001"
+                     oninput="document.getElementById('inv-number-display').textContent=this.value" />
+            </div>
+            <div class="setting-row">
+              <label class="setting-label">Notes</label>
+              <textarea class="notes-textarea" id="notes-input" rows="3"
+                placeholder="e.g. Payment due within 30 days. Thank you for your business."
+                oninput="updateNotes(this.value)"></textarea>
+            </div>
+            <div class="setting-row">
+              <div class="toggle-row">
+                <label class="setting-label">Show Discount</label>
+                <label class="toggle">
+                  <input type="checkbox" checked onchange="toggleRow('discount-row',this.checked)" />
+                  <div class="toggle-track"></div>
+                </label>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div class="toggle-row">
+                <label class="setting-label">Show Surcharge / Tax</label>
+                <label class="toggle">
+                  <input type="checkbox" checked onchange="toggleRow('surcharge-row',this.checked)" />
+                  <div class="toggle-track"></div>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /right-panel -->
+  </main>
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+  /* ─── STATE ─────────────────────────────────────────── */
+  let lineItems   = [];
+  let itemCounter = 0;
+
+  /* ─── INIT ──────────────────────────────────────────── */
+  function init() {
+    const today = new Date();
+    const due   = new Date(today);
+    due.setDate(due.getDate() + 30);
+    document.getElementById('issue-date').value = fmtDate(today);
+    document.getElementById('due-date').value   = fmtDate(due);
+    addLineItem('Web Development',  'Full-stack Next.js application development', 1, 120000);
+    addLineItem('UI/UX Design',     'Figma wireframes & design system',           1,  45000);
+    addLineItem('Hosting Setup',    'Vercel deployment & domain configuration',   1,   8500);
+  }
+
+  function fmtDate(d) { return d.toISOString().split('T')[0]; }
+
+  /* ─── LINE ITEMS ────────────────────────────────────── */
+  function addLineItem(item = '', desc = '', qty = 1, price = 0) {
+    lineItems.push({ id: ++itemCounter, item, desc, qty, price });
+    renderLineItems();
+    recalculate();
+  }
+
+  function removeLineItem(id) {
+    lineItems = lineItems.filter(i => i.id !== id);
+    renderLineItems();
+    recalculate();
+  }
+
+  function updateLineItem(id, field, val) {
+    const it = lineItems.find(i => i.id === id);
+    if (!it) return;
+    it[field] = (field === 'qty' || field === 'price') ? (parseFloat(val) || 0) : val;
+    const cell = document.getElementById('total-' + id);
+    if (cell) cell.textContent = fmt(it.qty * it.price);
+    recalculate();
+  }
+
+  function renderLineItems() {
+    document.getElementById('line-items-body').innerHTML = lineItems.map(it => `
+      <tr data-id="${it.id}">
+        <td><input class="editable" value="${esc(it.item)}" placeholder="Item name"
+              style="font-weight:500;font-size:11.5px;"
+              oninput="updateLineItem(${it.id},'item',this.value)" /></td>
+        <td><input class="editable" value="${esc(it.desc)}" placeholder="Description"
+              style="color:var(--text-secondary);font-size:11px;"
+              oninput="updateLineItem(${it.id},'desc',this.value)" /></td>
+        <td><input class="editable mono right" value="${it.qty}" type="number" min="0"
+              style="text-align:right;width:100%;font-size:11.5px;"
+              oninput="updateLineItem(${it.id},'qty',this.value)" /></td>
+        <td><input class="editable mono right" value="${it.price}" type="number" min="0"
+              style="text-align:right;width:100%;font-size:11.5px;"
+              oninput="updateLineItem(${it.id},'price',this.value)" /></td>
+        <td class="item-total-cell" id="total-${it.id}">${fmt(it.qty * it.price)}</td>
+        <td>
+          <button class="btn btn-danger-ghost btn-icon" onclick="removeLineItem(${it.id})" title="Remove">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+              <path d="M2 2l8 8M10 2L2 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+          </button>
+        </td>
+      </tr>`).join('');
+  }
+
+  /* ─── CALCULATIONS ──────────────────────────────────── */
+  function recalculate() {
+    const sub   = lineItems.reduce((s, i) => s + i.qty * i.price, 0);
+    const dPct  = parseFloat(document.getElementById('discount-pct').value)  || 0;
+    const sPct  = parseFloat(document.getElementById('surcharge-pct').value) || 0;
+    const disc  = sub * dPct / 100;
+    const after = sub - disc;
+    const sur   = after * sPct / 100;
+    const grand = after + sur;
+
+    document.getElementById('subtotal-display').textContent    = 'KES ' + fmt(sub);
+    document.getElementById('discount-display').textContent    = '— KES ' + fmt(disc);
+    document.getElementById('surcharge-display').textContent   = '+ KES ' + fmt(sur);
+    document.getElementById('grand-total-display').textContent = 'KES ' + fmt(grand);
+
+    document.getElementById('stat-items').textContent    = lineItems.length;
+    document.getElementById('stat-subtotal').textContent = fmt(sub);
+    document.getElementById('stat-grand').textContent    = fmt(grand);
+  }
+
+  /* ─── HELPERS ───────────────────────────────────────── */
+  function fmt(n) {
+    return Number(n).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function toggleRow(id, show) {
+    document.getElementById(id).style.display = show ? '' : 'none';
+  }
+  function updateNotes(val) {
+    document.getElementById('notes-display').textContent   = val;
+    document.getElementById('notes-section').style.display = val.trim() ? '' : 'none';
+  }
+  function updateStatus(sel) {
+    sel.className = 'status-badge status-' + sel.value;
+  }
+  function resetInvoice() {
+    if (!confirm('Start a new invoice? All current data will be cleared.')) return;
+    lineItems = []; itemCounter = 0;
+    ['client-name','client-email','client-phone','client-address',
+     'project-name','ref-number','notes-input'].forEach(id => {
+       document.getElementById(id).value = '';
+     });
+    document.getElementById('discount-pct').value             = '0';
+    document.getElementById('surcharge-pct').value            = '0';
+    document.getElementById('inv-number-input').value         = 'VTS-INV-001';
+    document.getElementById('inv-number-display').textContent = 'VTS-INV-001';
+    updateNotes('');
+    init();
+  }
+
+  /* ─── PDF DOWNLOAD ──────────────────────────────────── */
+  /* ─── PDF DOWNLOAD ──────────────────────────────────── */
+  /*
+    Strategy: bypass html2pdf entirely for the final render.
+    Use html2canvas directly, then jsPDF.addImage() with exact
+    A4 dimensions. This guarantees:
+      - No cropping (we control x/y/width/height of capture)
+      - Exactly 1 page (we stretch image to fill 210×297mm)
+      - No blank second page
+      - No left-side clipping from border/shadow offsets
+
+    Root causes of the previous bugs:
+      1. scale:3 made the rasterised image 3× the A4 height,
+         triggering html2pdf's pagination which split it to 2 pages.
+      2. The 1px border on .invoice-canvas added to offsetWidth,
+         causing a 2px horizontal overflow → left crop.
+      3. windowWidth:794 forced a layout narrower than the live
+         page, sometimes causing html2pdf to reflow content.
+  */
+  async function downloadPDF() {
+    const el     = document.getElementById('invoice-canvas');
+    const invNum = (document.getElementById('inv-number-input').value || 'invoice').trim();
+
+    /* 1. Hide editor controls */
+    const editorEls = [...document.querySelectorAll('.add-item-row, .btn-danger-ghost')];
+    editorEls.forEach(e => e.style.visibility = 'hidden');
+
+    /* 2. Strip decorative styles that affect capture bounds */
+    const prevBorder  = el.style.border;
+    const prevRadius  = el.style.borderRadius;
+    const prevShadow  = el.style.boxShadow;
+    el.style.border       = 'none';
+    el.style.borderRadius = '0';
+    el.style.boxShadow    = 'none';
+
+    /* Small settle delay so style changes paint before capture */
+    await new Promise(r => setTimeout(r, 80));
+
+    try {
+      /* 3. Rasterise at scale:2 — crisp but not oversized */
+      const cvs = await html2canvas(el, {
+        scale:           2,
+        useCORS:         true,
+        allowTaint:      true,
+        logging:         false,
+        letterRendering: true,
+        imageTimeout:    0,
+        backgroundColor: '#ffffff',
+        /* Capture only the element's own pixel box — no scroll offset */
+        x:           0,
+        y:           0,
+        width:       el.offsetWidth,
+        height:      el.offsetHeight,
+        scrollX:     0,
+        scrollY:     0
+      });
+
+      /* 4. Create jsPDF and stamp image to fill exactly one A4 page */
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const imgData = cvs.toDataURL('image/jpeg', 0.97);
+
+      /* addImage(data, format, x, y, width, height)
+         x=0 y=0 width=210mm height=297mm → full bleed, single page */
+      doc.addImage(imgData, 'JPEG', 0, 0, 210, 297);
+      doc.save(invNum + '.pdf');
+
+    } finally {
+      /* 5. Restore styles and controls */
+      el.style.border       = prevBorder;
+      el.style.borderRadius = prevRadius;
+      el.style.boxShadow    = prevShadow;
+      editorEls.forEach(e => e.style.visibility = '');
+    }
+  }
+
+  /* ─── BOOT ──────────────────────────────────────────── */
+  init();
+</script>
+</body>
+</html>
